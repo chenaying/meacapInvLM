@@ -1,0 +1,1 @@
+在ViECap的源码基础上复现MeaCapInvLM，更改了validation.py和viecap_inference.py,scrips脚本中添加了eval_coco_meacap.sh，eval_flickr30k_meacap.sh，eval_nocaps_meacap.sh等，目前只有eval_nocaps_meacap.sh运行存在问题
