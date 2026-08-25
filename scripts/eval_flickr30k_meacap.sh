@@ -33,7 +33,6 @@ VL_MODEL="${VL_MODEL:-/home/teacher5/data1/cyp/project/NewCap/checkpoints/clip-v
 PARSER_CKPT="${PARSER_CKPT:-/home/teacher5/data1/cyp/project/NewCap/checkpoints/flan-t5-base-VG-factual-sg}"
 WTE_MODEL="${WTE_MODEL:-/home/teacher5/data1/cyp/project/NewCap/checkpoints/all-MiniLM-L6-v2}"
 MEMORY_ID="${MEMORY_ID:-flickr30k}"
-MEMORY_CAPTION_NUM="${MEMORY_CAPTION_NUM:-5}"
 
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
@@ -64,7 +63,7 @@ python validation.py \
   --using_greedy_search \
   --use_meacap_invlm \
   --memory_id "${MEMORY_ID}" \
-  --memory_caption_num "${MEMORY_CAPTION_NUM}" \
+  --memory_caption_num 5 \
   --vl_model "${VL_MODEL}" \
   --parser_checkpoint "${PARSER_CKPT}" \
   --wte_model_path "${WTE_MODEL}" \

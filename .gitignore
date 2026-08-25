@@ -10,16 +10,27 @@ venv/
 .idea/
 .vscode/
 *.swp
+*.code-workspace
 
-# Large data & checkpoints (download from ViECap/MeaCap releases)
+# Large data & checkpoints (download separately; not for GitHub)
 annotations/
 checkpoints/
 data/
+gpt2/
 *.pt
 *.pth
 *.pickle
 *.pkl
+*.zip
 
-# Logs & outputs
+# Logs & runtime caches
 *.log
+logs/
 wandb/
+
+# Evaluation heavy assets (GitHub 100MB limit / regenerable)
+evaluation/pycocoevalcap/spice/cache/
+evaluation/pycocoevalcap/spice/tmp/
+evaluation/pycocoevalcap/spice/lib/stanford-corenlp-*-models.jar
+evaluation/pycocoevalcap/meteor/data/
+evaluation/pycocoevalcap/tokenizer/tmp*
