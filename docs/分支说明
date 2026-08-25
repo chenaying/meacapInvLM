@@ -1,0 +1,32 @@
+2026.8.25
+服务器："/home/teacher5/data1/cyp/project/MeaCap_InvLM/"
+本地："E:\College\lab\experiments\Code\MeaCap_improvement\Former\MeaCap_InvLM\MeaCapInvLM"
+复现的MeaCapInvLM模型
+
+域内实验coco												
+MeaCapInvLM论文	27.2 	25.3	95.4	19			COCO		coco			
+												
+	26.8	25.2	94.4	19	51.4	bash scripts/eval_coco_meacap.sh train_coco 0 14	COCO		coco													
+												
+域内实验flickr												
+MeaCapInvLM论文	22.3 	22.3	59.4	15.6			Flickr30k		flickr30k			
+												
+	23.4	22.9	62.4	17.4	48.6	bash scripts/eval_flickr30k_meacap.sh train_flickr30k 0 '' 29	Flickr30k		flickr30k	memory_caption_num 5		
+	23	21.7	57.6	15.3	47.6	bash scripts/eval_flickr30k_meacap.sh train_flickr30k 0 '--memory_caption_num 3 ' 29	Flickr30k		flickr30k	memory_caption_num 3		
+
+跨域实验coco->flickr												
+MeaCapInvLM论文	18.5 	19.5	43.9	12.8			COCO->Flickr30k		coco			
+												
+"/home/teacher5/data1/cyp/project/MeaCap_InvLM/"	18	18.7	40.9	12.1	43.2	MEMORY_ID=coco bash scripts/eval_flickr30k_meacap.sh train_coco 0 '--top_k 3 --threshold 0.2' 14	COCO->Flickr30k		coco	A100		
+	18	18.7	41.1	12.1	43.3	MEMORY_ID=coco bash scripts/eval_flickr30k_meacap.sh train_coco 0  14	COCO->Flickr30k		coco			
+	22.4	21.1	58	15.4	46.8	bash scripts/eval_flickr30k_meacap.sh train_coco 0 '--top_k 3 --threshold 0.2' 14	COCO->Flickr30k		flickr30k			
+	18.1	18.7	40.9	12.1	43.2	MEMORY_ID=coco bash scripts/eval_flickr30k_meacap.sh train_coco 0  14	COCO->Flickr30k		coco			
+	17.6	18.1	38.1	11.3	42.8	MEMORY_ID=coco bash scripts/eval_flickr30k_meacap.sh train_coco 0 '--memory_caption_num 3' 14	COCO->Flickr30k	inference	coco		memory_caption_num 3	
+																							
+跨域实验flickr->coco												
+MeaCapInvLM论文	13.1 	19.7	56.4	13.2			Flickr30k->COCO		flickr30k			
+												
+"/home/teacher5/data1/cyp/project/MeaCap_InvLM/"	11.8	18.4	47.2	11.5	39.3	MEMORY_ID=flickr30k bash scripts/eval_coco_meacap.sh train_flickr30k 0 '--top_k 3 --threshold 0.2 --using_greedy_search' 29	Flickr30k->COCO		flickr30k	A100		
+	14.3	21.2	62.9	14.8	42.6	bash scripts/eval_coco_meacap.sh train_flickr30k 0 '--top_k 3 --threshold 0.2 --using_greedy_search' 29	Flickr30k->COCO		coco			
+	11.8	18.5	46.9	11.9	39.3	MEMORY_ID=flickr30k bash scripts/eval_coco_meacap.sh train_flickr30k 0  29	Flickr30k->COCO		flickr30k			
+	11.2	17.4	40	10.4	38.4	MEMORY_ID=flickr30k bash scripts/eval_coco_meacap.sh train_flickr30k 0 '--memory_caption_num 3 ' 29	Flickr30k->COCO	meacap	flickr30k			
