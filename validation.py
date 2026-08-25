@@ -18,6 +18,8 @@ from meacap_utils.invlm_prompt import (
     hard_prompt_embeddings,
     resolve_image_path,
     check_nocaps_images_available,
+    load_nocaps_hf_clip_lookup,
+    invlm_skips_disk_images,
 )
 
 
@@ -72,6 +74,12 @@ def validation_nocaps(
         raise ValueError(f'Empty annotations in {inpath}. Cannot run evaluation.')
 
     if args.use_meacap_invlm:
+        from meacap_utils.invlm_prompt import ensure_nocaps_image_map
+
+        if getattr(args, 'nocaps_hf_clip_pickle', None):
+            args._nocaps_hf_embed_lookup = load_nocaps_hf_clip_lookup(args.nocaps_hf_clip_pickle)
+            print(f'[nocaps] HF CLIP embed pickle loaded: {args.nocaps_hf_clip_pickle}')
+        ensure_nocaps_image_map(args)
         samples = []
         for ann in annotations[:10]:
             if args.using_image_features:
@@ -88,7 +96,9 @@ def validation_nocaps(
         if args.using_image_features:
             image_id, split, image_features, captions = annotation
             image_features = image_features.float().unsqueeze(dim=0).to(device)
-            image_path = resolve_image_path(args, image_id, split)
+            image_path = None
+            if not invlm_skips_disk_images(args):
+                image_path = resolve_image_path(args, image_id, split)
         else:
             image_id = annotation['image_id']
             split = annotation['split']
@@ -106,6 +116,7 @@ def validation_nocaps(
             embeddings = hard_prompt_embeddings(
                 args, model, tokenizer, continuous_embeddings, image_features,
                 image_path, device, invlm_resources, entities_text, texts_embeddings,
+                image_id=image_id, split=split,
             )
         else:
             embeddings = continuous_embeddings
@@ -170,7 +181,9 @@ def validation_coco_flickr30k(
         if args.using_image_features:
             image_id, image_features, captions = item
             image_features = image_features.float().unsqueeze(dim=0).to(device)
-            image_path = resolve_image_path(args, image_id)
+            image_path = None
+            if not invlm_skips_disk_images(args):
+                image_path = resolve_image_path(args, image_id)
         else:
             image_id = item
             captions = annotations[item]
@@ -187,6 +200,7 @@ def validation_coco_flickr30k(
             embeddings = hard_prompt_embeddings(
                 args, model, tokenizer, continuous_embeddings, image_features,
                 image_path, device, invlm_resources, entities_text, texts_embeddings,
+                image_id=image_id,
             )
         else:
             embeddings = continuous_embeddings
@@ -328,6 +342,24 @@ if __name__ == '__main__':
     parser.add_argument('--parser_checkpoint', type=str, default='lizhuang144/flan-t5-base-VG-factual-sg')
     parser.add_argument('--wte_model_path', type=str, default='sentence-transformers/all-MiniLM-L6-v2')
     parser.add_argument('--local_files_only', action='store_true', default=False)
+    parser.add_argument(
+        '--nocaps_meta_json',
+        type=str,
+        default=None,
+        help='NoCaps COCO-style json with "images" (id -> file_name). Auto-tries nocaps_corpus.json / image_info.json.',
+    )
+    parser.add_argument(
+        '--nocaps_hf_clip_pickle',
+        type=str,
+        default=None,
+        help='Precomputed HF CLIP embeddings pickle (same rows as ViT-B32 pickle). No jpg needed.',
+    )
+    parser.add_argument(
+        '--invlm_memory_from_openai_pickle',
+        action='store_true',
+        default=False,
+        help='Use ViECap OpenAI CLIP features from pickle for memory retrieval (approximate; no jpg).',
+    )
 
     args = parser.parse_args()
     print('args: {}\n'.format(vars(args)))

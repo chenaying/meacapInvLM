@@ -47,12 +47,24 @@ if [[ ! -f "${FEATURE_PICKLE}" ]]; then
 fi
 echo "Using feature pickle: ${FEATURE_PICKLE} ($(du -h "${FEATURE_PICKLE}" | cut -f1))"
 
-# InvLM needs raw images (HF CLIP); ViECap pickle alone is not enough
-if [[ ! -d "${NOCAPS_IMG_DIR}/in_domain" && ! -d "${NOCAPS_IMG_DIR}/in-domain" && ! -d "${NOCAPS_IMG_DIR}/val" ]]; then
-  echo "ERROR: NoCaps images not found under ${NOCAPS_IMG_DIR}/"
-  echo "  Expected one of: in_domain/, in-domain/, or val/"
-  echo "  Download from ViECap checkpoints.zip (annotations/nocaps/) or official NoCaps val images."
-  exit 1
+# InvLM memory retrieval needs HF CLIP image vectors. Options:
+#   (1) jpg on disk (default)  (2) --nocaps_hf_clip_pickle  (3) --invlm_memory_from_openai_pickle (approx)
+if [[ "${EXTRA_ARGS}" != *"invlm_memory_from_openai_pickle"* && "${EXTRA_ARGS}" != *"nocaps_hf_clip_pickle"* ]]; then
+  NOCAPS_SAMPLE="${NOCAPS_IMG_DIR}/in_domain/0.jpg"
+  if [[ ! -f "${NOCAPS_SAMPLE}" ]]; then
+    NOCAPS_SAMPLE="${NOCAPS_IMG_DIR}/in-domain/0.jpg"
+  fi
+  NOCAPS_JPG_COUNT=$(find "${NOCAPS_IMG_DIR}" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) 2>/dev/null | wc -l)
+  if [[ ! -f "${NOCAPS_SAMPLE}" ]]; then
+    echo "ERROR: missing ${NOCAPS_IMG_DIR}/in_domain/0.jpg"
+    echo "  Found ${NOCAPS_JPG_COUNT} images (need ~4500), or use embedding fallback in EXTRA_ARGS:"
+    echo "    '--invlm_memory_from_openai_pickle'   # uses existing ViT-B32.pickle (not paper-faithful)"
+    echo "    '--nocaps_hf_clip_pickle ./annotations/nocaps/nocaps_corpus_hf_clip.pickle'"
+    exit 1
+  fi
+  echo "NoCaps images OK (sample: ${NOCAPS_SAMPLE}, total jpg/png: ${NOCAPS_JPG_COUNT})"
+else
+  echo "NoCaps InvLM: skipping jpg check (using precomputed embeddings from EXTRA_ARGS)"
 fi
 
 python validation.py \

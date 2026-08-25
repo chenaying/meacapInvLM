@@ -3,7 +3,7 @@
 import copy
 import os
 import json
-from typing import List
+from typing import Dict, List, Optional
 
 import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
@@ -71,9 +71,15 @@ class MeaCapInvLMResources:
         print(f'[MeaCap InvLM] memory bank "{memory_id}" loaded ({len(self.memory_captions)} captions).')
 
 
-def retrieve_memory_concepts(resources: MeaCapInvLMResources, image_path: str) -> List[str]:
+def _memory_retrieval_from_embeds(
+    resources: MeaCapInvLMResources,
+    batch_image_embeds: torch.Tensor,
+) -> List[str]:
     device = resources.device
-    batch_image_embeds = resources.vl_model.compute_image_representation_from_image_path(image_path)
+    batch_image_embeds = batch_image_embeds.to(device)
+    if batch_image_embeds.dim() == 1:
+        batch_image_embeds = batch_image_embeds.unsqueeze(0)
+    batch_image_embeds = batch_image_embeds / batch_image_embeds.norm(dim=-1, keepdim=True)
 
     if not resources.retrieve_on_cpu:
         clip_score, _ = resources.vl_model_retrieve.compute_image_text_similarity_via_embeddings(
@@ -96,6 +102,76 @@ def retrieve_memory_concepts(resources: MeaCapInvLMResources, image_path: str) -
         select_memory_captions=select_captions,
         image_embeds=batch_image_embeds,
         device=device,
+    )
+
+
+def retrieve_memory_concepts_from_embeds(
+    resources: MeaCapInvLMResources,
+    batch_image_embeds: torch.Tensor,
+) -> List[str]:
+    """Memory retrieval using precomputed HF CLIP image embeddings (no jpg on disk)."""
+    return _memory_retrieval_from_embeds(resources, batch_image_embeds)
+
+
+def retrieve_memory_concepts(resources: MeaCapInvLMResources, image_path: str) -> List[str]:
+    device = resources.device
+    batch_image_embeds = resources.vl_model.compute_image_representation_from_image_path(image_path)
+    return _memory_retrieval_from_embeds(resources, batch_image_embeds)
+
+
+def _warn_openai_pickle_memory_once(args) -> None:
+    if getattr(args, '_warned_openai_memory', False):
+        return
+    print(
+        '[warn] --invlm_memory_from_openai_pickle: ViECap pickle uses OpenAI CLIP, '
+        'but memory bank uses HF CLIP. Retrieval is approximate, not MeaCap-paper faithful.'
+    )
+    args._warned_openai_memory = True
+
+
+def retrieve_memory_concepts_for_validation(
+    args,
+    resources: MeaCapInvLMResources,
+    image_features: torch.Tensor,
+    image_path: str,
+    image_id: str = None,
+    split: str = None,
+) -> List[str]:
+    """Pick memory retrieval source: disk image, HF embed pickle, or OpenAI pickle (fallback)."""
+    if getattr(args, 'nocaps_hf_clip_pickle', None) and getattr(args, '_nocaps_hf_embed_lookup', None):
+        lookup = args._nocaps_hf_embed_lookup
+        key = (image_id, split) if split is not None else image_id
+        hf_embed = lookup.get(key) or lookup.get(image_id)
+        if hf_embed is None:
+            raise KeyError(f'No HF CLIP embedding in pickle for image_id={image_id}, split={split}')
+        return retrieve_memory_concepts_from_embeds(resources, hf_embed.unsqueeze(0).float())
+
+    if getattr(args, 'invlm_memory_from_openai_pickle', False):
+        _warn_openai_pickle_memory_once(args)
+        return retrieve_memory_concepts_from_embeds(resources, image_features)
+
+    if image_path is None:
+        raise ValueError('InvLM memory retrieval needs image_path, --nocaps_hf_clip_pickle, or --invlm_memory_from_openai_pickle')
+    return retrieve_memory_concepts(resources, image_path)
+
+
+def load_nocaps_hf_clip_lookup(pickle_path: str) -> dict:
+    import pickle as pkl
+
+    with open(pickle_path, 'rb') as f:
+        rows = pkl.load(f)
+    lookup = {}
+    for row in rows:
+        image_id, split, hf_embed, _captions = row[0], row[1], row[2], row[3]
+        lookup[(image_id, split)] = hf_embed
+        lookup[image_id] = hf_embed
+    return lookup
+
+
+def invlm_skips_disk_images(args) -> bool:
+    return bool(
+        getattr(args, 'invlm_memory_from_openai_pickle', False)
+        or getattr(args, 'nocaps_hf_clip_pickle', None)
     )
 
 
@@ -124,6 +200,68 @@ NOCAPS_SPLIT_DIR_ALIASES = {
 }
 
 
+def load_nocaps_image_id_map(image_folder: str, corpus_json_path: str = None) -> dict:
+    """Map ViECap pickle ids (e.g. 0.jpg) to official NoCaps file_name (e.g. 0013ea....jpg)."""
+    mapping = {}
+
+    def _add(key, file_name: str) -> None:
+        if not file_name:
+            return
+        if not os.path.splitext(file_name)[1]:
+            file_name = f'{file_name}.jpg'
+        key_s = str(key).strip()
+        mapping[key_s] = file_name
+        stem, _ = os.path.splitext(key_s)
+        mapping[stem] = file_name
+        mapping[f'{stem}.jpg'] = file_name
+
+    meta_paths = []
+    if corpus_json_path:
+        meta_paths.append(corpus_json_path)
+    meta_paths.extend([
+        os.path.join(image_folder, 'nocaps_val_image_info.json'),
+        os.path.join(image_folder, 'image_info.json'),
+        os.path.join(image_folder, 'nocaps_val_4500_captions.json'),
+    ])
+
+    for path in meta_paths:
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        if isinstance(data, dict) and 'images' in data:
+            for img in data['images']:
+                file_name = img.get('file_name')
+                if not file_name and img.get('open_images_id'):
+                    oid = str(img['open_images_id'])
+                    file_name = oid if oid.endswith('.jpg') else f'{oid}.jpg'
+                if not file_name:
+                    continue
+                if 'id' in img:
+                    _add(img['id'], file_name)
+                if img.get('open_images_id'):
+                    _add(img['open_images_id'], file_name)
+            if mapping:
+                print(f'[nocaps] image id map: {len(mapping)} keys from {path}')
+                return mapping
+
+    return mapping
+
+
+def ensure_nocaps_image_map(args) -> None:
+    if getattr(args, '_nocaps_image_map', None) is None:
+        corpus = getattr(args, 'path_of_val_datasets', None)
+        meta = getattr(args, 'nocaps_meta_json', None)
+        args._nocaps_image_map = load_nocaps_image_id_map(
+            args.image_folder,
+            meta or corpus,
+        )
+
+
 def _normalize_image_id(image_id) -> str:
     image_id = str(image_id).strip()
     if not os.path.splitext(image_id)[1]:
@@ -135,16 +273,38 @@ def resolve_image_path(args, image_id: str, split: str = None) -> str:
     """Build filesystem path for HF CLIP memory retrieval (must exist on disk)."""
     image_id = _normalize_image_id(image_id)
     image_folder = args.image_folder.rstrip('/\\')
+    stem = os.path.splitext(image_id)[0]
 
     candidates = []
+    image_map = getattr(args, '_nocaps_image_map', None) or {}
+    alt_name = image_map.get(image_id) or image_map.get(stem)
+    if alt_name:
+        for sub in ('val', 'images', 'validation', ''):
+            if sub:
+                candidates.append(os.path.join(image_folder, sub, alt_name))
+            else:
+                candidates.append(os.path.join(image_folder, alt_name))
+
     if split is not None:
         split_dirs = NOCAPS_SPLIT_DIR_ALIASES.get(split, (split,))
         for split_dir in split_dirs:
             candidates.append(os.path.join(image_folder, split_dir, image_id))
-        # official NoCaps val layout: annotations/nocaps/val/<file>
+            if alt_name:
+                candidates.append(os.path.join(image_folder, split_dir, alt_name))
         candidates.append(os.path.join(image_folder, 'val', image_id))
+        if alt_name:
+            candidates.append(os.path.join(image_folder, 'val', alt_name))
     else:
         candidates.append(os.path.join(image_folder, image_id))
+
+    # de-duplicate while preserving order
+    seen = set()
+    unique_candidates = []
+    for path in candidates:
+        if path not in seen:
+            seen.add(path)
+            unique_candidates.append(path)
+    candidates = unique_candidates
 
     for path in candidates:
         if os.path.isfile(path):
@@ -163,8 +323,10 @@ def resolve_image_path(args, image_id: str, split: str = None) -> str:
     raise FileNotFoundError(
         f'NoCaps image not found for image_id={image_id}, split={split}.\n'
         f'Tried:\n  {tried}\n'
-        f'Please download NoCaps val images into {image_folder}/in_domain/ (and near/out_domain).\n'
-        f'ViECap checkpoints.zip usually includes annotations/nocaps/ with images, or run images_features_extraction.py after placing images.'
+        f'Please provide NoCaps val images:\n'
+        f'  (A) ViECap layout: {image_folder}/in_domain/0.jpg (from checkpoints.zip), or\n'
+        f'  (B) Official layout: {image_folder}/val/<openimages_id>.jpg plus image_info JSON\n'
+        f'      (nocaps_val_image_info.json / COCO-style nocaps json with "images" field).'
     )
 
 
@@ -188,6 +350,10 @@ def check_nocaps_images_available(args, sample_paths: List[tuple]) -> None:
     """Preflight: verify a few NoCaps images exist before 4500-iter loop."""
     if not getattr(args, 'use_meacap_invlm', False):
         return
+    if invlm_skips_disk_images(args):
+        print('[nocaps] InvLM memory: using precomputed embeddings (no jpg required).')
+        return
+    ensure_nocaps_image_map(args)
     if not getattr(args, '_nocaps_image_index', None):
         args._nocaps_image_index = build_nocaps_image_index(args.image_folder)
     missing = 0
@@ -210,15 +376,19 @@ def hard_prompt_embeddings(
     tokenizer,
     continuous_embeddings: torch.Tensor,
     image_features: torch.Tensor,
-    image_path: str,
-    device: torch.device,
+    image_path: str = None,
+    device: torch.device = None,
     invlm_resources: MeaCapInvLMResources = None,
     entities_text: List[str] = None,
     texts_embeddings: torch.Tensor = None,
+    image_id: str = None,
+    split: str = None,
 ) -> torch.Tensor:
     """ViECap entity classifier or MeaCap memory concepts."""
     if getattr(args, 'use_meacap_invlm', False):
-        detected_objects = retrieve_memory_concepts(invlm_resources, image_path)
+        detected_objects = retrieve_memory_concepts_for_validation(
+            args, invlm_resources, image_features, image_path, image_id, split,
+        )
     else:
         from retrieval_categories import image_text_simiarlity, top_k_categories
 
